@@ -1,0 +1,15 @@
+[Unit]
+Description=wa-web WhatsApp sender
+After=network.target
+
+[Service]
+Type=simple
+# Sesuaikan path di bawah dengan lokasi instalasi Anda
+WorkingDirectory=/home/USER/wa-web
+EnvironmentFile=/home/USER/wa-web/.env
+ExecStart=/usr/bin/node /home/USER/wa-web/server.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

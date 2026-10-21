@@ -1,0 +1,12 @@
+# Rahasia & data sesi — JANGAN PERNAH di-commit
+.env
+*/.env
+
+# Data sesi WhatsApp Web (sama dengan kredensial login akun!)
+wa-poster/data/
+
+# File temp jalur bridge (otomatis dihapus, untuk berjaga-jaga)
+wa-web/uploads/
+
+node_modules/
+*.log

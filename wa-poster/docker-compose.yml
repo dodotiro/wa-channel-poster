@@ -1,0 +1,13 @@
+services:
+  wa-poster:
+    build: .
+    container_name: wa-poster
+    restart: unless-stopped
+    mem_limit: 1200m
+    environment:
+      - POSTER_TOKEN=${POSTER_TOKEN}
+      - PAIR_PHONE=${PAIR_PHONE}
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./data:/data
