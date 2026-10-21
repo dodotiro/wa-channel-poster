@@ -81,9 +81,9 @@ function readBody(req, limit = 30 * 1024 * 1024) {
 }
 
 const PAGE = `<!doctype html>
-<html lang="id"><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kirim WhatsApp</title>
+<title>WhatsApp Sender</title>
 <style>
  body{font-family:system-ui,sans-serif;max-width:560px;margin:24px auto;padding:0 16px;background:#0b141a;color:#e9edef}
  h1{font-size:20px} label{display:block;margin:14px 0 6px;font-size:14px;color:#8696a0}
@@ -95,27 +95,27 @@ const PAGE = `<!doctype html>
  .card{background:#111b21;padding:18px;border-radius:12px}
 </style></head><body>
 <div class="card">
-<h1>Kirim WhatsApp</h1>
+<h1>WhatsApp Sender</h1>
 <div id="loginBox" style="display:none">
  <label>Password</label>
  <input type="password" id="pw" autocomplete="current-password">
- <button id="loginBtn">Masuk</button>
+ <button id="loginBtn">Sign in</button>
 </div>
 <div id="appBox" style="display:none">
- <label>Tujuan</label>
- <div style="padding:10px;border-radius:8px;border:1px solid #2a3942;background:#1f2c34;font-size:15px">Saluran (tujuan terkunci)</div>
- <label>Pesan teks / caption</label>
- <textarea id="text" placeholder="Tulis pesan..."></textarea>
- <label>Gambar (opsional): pilih file atau tempel screenshot langsung (Ctrl+V)</label>
+ <label>Destination</label>
+ <div style="padding:10px;border-radius:8px;border:1px solid #2a3942;background:#1f2c34;font-size:15px">Channel (locked destination)</div>
+ <label>Message text / caption</label>
+ <textarea id="text" placeholder="Type a message..."></textarea>
+ <label>Image (optional). Pick a file or paste a screenshot with Ctrl+V</label>
  <input type="file" id="file" accept="image/*,video/mp4,application/pdf">
  <img id="prev" alt="">
  <div id="fileInfo" style="font-size:13px;color:#8696a0;margin-top:6px"></div>
- <button id="sendBtn">Kirim</button>
+ <button id="sendBtn">Send</button>
  <div id="status"></div>
 </div>
 </div>
 <div style="text-align:center;margin-top:16px;font-size:14px;color:#8696a0">
- Mengalami kendala? <a href="https://wa.me/628xxxxxxxxxx" target="_blank" rel="noopener" style="color:#00a884;text-decoration:none;font-weight:600">Hubungi via WhatsApp</a>
+ Need help? <a href="https://wa.me/628xxxxxxxxxx" target="_blank" rel="noopener" style="color:#00a884;text-decoration:none;font-weight:600">Contact on WhatsApp</a>
 </div>
 <script>
 const $=id=>document.getElementById(id);
@@ -124,32 +124,32 @@ async function me(){const r=await fetch('/api/me');const j=await r.json();
  $('loginBox').style.display=j.authed?'none':'block';
  $('appBox').style.display=j.authed?'block':'none';}
 $('loginBtn').onclick=async()=>{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:$('pw').value})});
- if(r.ok){me();}else{$('pw').value='';alert('Password salah');}};
+ if(r.ok){me();}else{$('pw').value='';alert('Wrong password');}};
 function clearFile(){$('file').value='';fileData=null;$('prev').style.display='none';$('fileInfo').textContent='';}
 function loadFile(f,src){if(!f){clearFile();return;}
  let name=f.name;
- if(src==='tempel'){const ext=(f.type.split('/')[1]||'png').replace('svg+xml','svg').replace(/[^a-z0-9]/gi,'')||'png';
+ if(src==='paste'){const ext=(f.type.split('/')[1]||'png').replace('svg+xml','svg').replace(/[^a-z0-9]/gi,'')||'png';
   const d=new Date(),p=n=>String(n).padStart(2,'0');
   name='screenshot-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds())+'.'+ext;}
  const rd=new FileReader();rd.onload=()=>{fileData={base64:rd.result.split(',')[1],mimetype:f.type||'image/png',name};
  if(f.type.startsWith('image/')){$('prev').src=rd.result;$('prev').style.display='block';}else{$('prev').style.display='none';}
- $('fileInfo').textContent='Siap dikirim: '+name+' ('+(src==='tempel'?'dari tempel/clipboard':'dari file')+')';};rd.readAsDataURL(f);}
+ $('fileInfo').textContent=name+(src==='paste'?' (pasted from clipboard)':' (from file)');};rd.readAsDataURL(f);}
 $('file').onchange=()=>{loadFile($('file').files[0],'file');};
 document.addEventListener('paste',e=>{
  if($('appBox').style.display==='none')return;
  const cd=e.clipboardData||window.clipboardData;if(!cd||!cd.items)return;
  for(const it of cd.items){if(it.kind==='file'&&it.type.startsWith('image/')){const f=it.getAsFile();
-  if(f){e.preventDefault();loadFile(f,'tempel');$('status').textContent='Gambar dari clipboard siap, tinggal klik Kirim.';}
+  if(f){e.preventDefault();loadFile(f,'paste');$('status').textContent='Image pasted from the clipboard. Press Send when ready.';}
   break;}}});
 $('sendBtn').onclick=async()=>{const st=$('status');
  const payload={target:'channel',text:$('text').value,...(fileData?{file:fileData}:{})};
- if(!payload.text&&!fileData){st.textContent='Isi teks atau pilih gambar dulu.';return;}
- $('sendBtn').disabled=true;st.textContent='Mengirim...';
+ if(!payload.text&&!fileData){st.textContent='Write a message or attach an image first.';return;}
+ $('sendBtn').disabled=true;st.textContent='Sending...';
  try{const r=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
  const j=await r.json();if(!r.ok)throw new Error(j.error||'gagal');
- st.textContent='Terkirim ✓ ('+(j.via||'')+', id: '+(j.messageId||'-')+')';
+ st.textContent='Sent ✓ ('+(j.via||'')+', id: '+(j.messageId||'-')+')';
  $('text').value='';clearFile();
- }catch(e){st.textContent='Gagal: '+e.message;}finally{$('sendBtn').disabled=false;}};
+ }catch(e){st.textContent='Failed: '+e.message;}finally{$('sendBtn').disabled=false;}};
 me();
 </script></body></html>`;
 
@@ -187,12 +187,12 @@ const server = http.createServer(async (req, res) => {
         return res.end('{"ok":true}');
       }
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      return res.end('{"error":"password salah"}');
+      return res.end('{"error":"wrong password"}');
     }
     if (req.url === '/api/send' && req.method === 'POST') {
       if (!authed(req)) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end('{"error":"belum login"}');
+        return res.end('{"error":"not signed in"}');
       }
       const b = await readBody(req);
       const target = String(b.target || 'channel');
@@ -236,7 +236,7 @@ const server = http.createServer(async (req, res) => {
         }
       } else {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end('{"error":"teks atau file wajib ada"}');
+        return res.end('{"error":"text or file is required"}');
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({

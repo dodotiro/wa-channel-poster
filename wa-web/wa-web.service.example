@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-# Sesuaikan path di bawah dengan lokasi instalasi Anda
+# Adjust the paths below to your installation
 WorkingDirectory=/home/USER/wa-web
 EnvironmentFile=/home/USER/wa-web/.env
 ExecStart=/usr/bin/node /home/USER/wa-web/server.js

@@ -1,148 +1,131 @@
 # WA Channel Poster
 
-Alat buat posting teks dan gambar ke Saluran WhatsApp (Channel) dari halaman web.
-Awalnya ini kubuat karena kebutuhan sendiri: aku admin sebuah Saluran dan capek
-posting manual dari HP, jadi kubuat web sederhana supaya bisa posting dari laptop,
-termasuk kirim gambar dan screenshot tugas.
+A small system for posting text and images to a WhatsApp Channel from a web
+page. It runs on a home server and sends through a real WhatsApp Web session,
+because image posts to Channels do not go through when they are sent with
+regular bot libraries such as Baileys. WhatsApp accepts the request and even
+returns a message id, but the post never appears in the Channel. Text works,
+media does not.
 
-Kedengarannya sepele, ternyata tidak. Ceritanya ada di bawah.
+The project has two parts.
 
-## Kenapa tidak pakai bot biasa saja?
+**wa-poster** is a sidecar service. It runs WhatsApp Web in Chromium through
+the whatsapp-web.js library, packaged as a Docker container. It signs in as a
+linked device and exposes a small HTTP API for sending.
 
-Sudah kucoba duluan lewat bot WhatsApp (Baileys, lewat bridge Hermes). Hasilnya:
-
-- Kirim teks ke Saluran: bisa.
-- Kirim gambar ke Saluran: API-nya bilang sukses, messageId keluar, log bersih,
-  tapi postingannya tidak pernah muncul di Saluran. Dicek berkali-kali tetap sama.
-  Rupanya server WhatsApp membuang konten selain teks dari jalur itu tanpa
-  memberi tahu apa pun.
-
-Library whatsapp-web.js juga tidak langsung menyelesaikan masalah. Jalur
-Saluran bawaan versi 1.34.7 sudah tidak cocok dengan WhatsApp Web sekarang:
-ada dua tempat yang error karena perubahan internal WA Web, dan satu fungsi
-yang dipanggil library (`avParams()`) sudah tidak ada lagi di WA Web versi baru.
-
-Akhirnya kubuat jalur sendiri di dalam halaman WhatsApp Web, meniru cara WA Web
-resmi memposting ke Saluran. Inti-intinya begini:
-
-1. Ambil data Saluran dari `WAWebNewsletterCollection` pakai objek Wid.
-   Kalau pakai string biasa langsung error.
-2. Media disiapkan pakai `processMediaData` dengan opsi `sendToChannel: true`,
-   nanti dapat `mediaHandle` dari hasil upload-nya.
-3. Model pesan dibangun dari `mediaData.toJSON()` saja. Jangan menyebar objek
-   model mentahnya, itu yang bikin error getter tadi.
-4. Catat dulu pesan ke `addNewsletterMsgsRecords`, baru kirim pakai
-   `sendNewsletterMessageJob`. Untuk gambar, `mediaMetadata` tidak perlu diisi.
-
-Kalau berhasil, server WhatsApp membalas `success: true` plus `serverId`, dan
-postingannya benar-benar nongol di Saluran. Cara ini yang sekarang kupakai dan
-sudah jalan di serverku sendiri.
-
-## Isi proyek
-
-Ada dua bagian:
-
-**wa-poster** (folder `wa-poster/`)
-Sidecar yang menjalankan WhatsApp Web asli di dalam Docker (Chromium +
-whatsapp-web.js). Dia yang login ke WhatsApp sebagai perangkat tertaut dan
-menyediakan API HTTP kecil untuk mengirim pesan. Pipeline Saluran kustom di
-atas ada di file `index.js`, fungsi `sendToChannel()`.
-
-**wa-web** (folder `wa-web/`)
-Halaman web pengirimnya. Satu file Node.js tanpa dependensi tambahan. Ada login
-password, form teks, upload gambar (bisa juga tempel screenshot pakai Ctrl+V),
-lalu pengiriman diteruskan ke sidecar.
-
-Alurnya kurang lebih:
+**wa-web** is the sender page. It is a single Node.js file with no extra
+dependencies. It has a password login, a message form, and image attachments.
+It forwards every send request to the sidecar.
 
 ```
-Browser -> wa-web (port 8090) -> wa-poster (port 3001) -> WhatsApp Web -> Saluran
+Browser -> wa-web on port 8090 -> wa-poster on port 3001 -> WhatsApp Web -> Channel
 ```
 
-Khusus tujuan chat pribadi/grup, wa-web meneruskan ke bridge WhatsApp Hermes
-di port 3000. Bagian itu opsional, tanpa bridge pun mode Saluran tetap jalan.
+Personal and group chats can also be served when a Hermes WhatsApp bridge is
+running on the same machine on port 3000. That part is optional. Channel mode
+works without it.
 
-## Fitur
+## How channel sending works
 
-Sidecar wa-poster:
+The channel path in whatsapp-web.js 1.34.7 no longer matches the current
+WhatsApp Web build, so the sidecar uses a custom function named
+`sendToChannel()` in `wa-poster/index.js`. It runs inside the WhatsApp Web
+page and follows the same steps the official web client uses.
 
-- Pairing pakai kode 8 karakter (cara ini yang berhasil di serverku; pairing QR
-  sempat gagal terus karena QR-nya berputar terlalu cepat untuk dipindai).
-- Sesi tersimpan di volume `./data`, jadi restart container tidak perlu pairing ulang.
-- API dikunci token lewat header `X-Token`, hanya listen di 127.0.0.1 port 3001.
-- Gambar tidak disimpan jadi file di server. Datanya diterima sebagai base64,
-  diproses di memori, lalu diupload langsung ke WhatsApp.
-- Ada pembersih lock Chromium otomatis. Waktu awal ngoprek, container sempat
-  gagal start setelah di-recreate gara-gara file `SingletonLock` basi di volume.
+1. The channel object is loaded from `WAWebNewsletterCollection` with a Wid
+   object. Passing a plain string throws an error.
+2. Media is prepared with `WWebJS.processMediaData` and the
+   `sendToChannel` option turned on. The result carries a `mediaHandle` from
+   the unencrypted channel upload.
+3. The message model is built from `mediaData.toJSON()` only. Spreading the
+   raw media model into the message breaks an internal WhatsApp getter.
+4. The message record is stored with `addNewsletterMsgsRecords`, then sent
+   with `sendNewsletterMessageJob`. Image sends do not need the
+   `mediaMetadata` field on the current WhatsApp Web build.
 
-Endpoint sidecar:
+A successful send returns `success` and a `serverId`, and the post shows up
+in the Channel like a post made from the phone app.
 
-- `GET /health` untuk cek status dan nomor yang terhubung
-- `GET /qr` untuk mengambil QR pairing
-- `GET /code` untuk mengambil kode pairing 8 karakter
-- `POST /send` untuk mengirim teks atau gambar
-- `POST /probe` alat bantu diagnosis, ikut dikunci token
+## Features
 
-Web wa-web:
+The sidecar signs in with an 8 digit pairing code. QR pairing is also
+available, but the code method proved more reliable because the QR rotates
+too fast to scan from a headless session. The session is stored in the
+`./data` volume, so restarts do not need a new pairing. The API listens on
+127.0.0.1 port 3001 only and requires a token in the `X-Token` header.
+Images are handled in memory as base64 and uploaded straight to WhatsApp, so
+no image files are kept on the server. Stale Chromium lock files in the
+persisted profile are removed automatically before the client starts.
 
-- Login satu password bersama, sesi pakai cookie httpOnly selama 30 hari.
-- Tujuan bawaan terkunci ke satu Saluran saja.
-- Form teks/caption, lampiran gambar dari file atau tempel dari clipboard,
-  pratinjau gambar sebelum kirim, dan indikator status sidecar.
-- Footer kontak bantuan di bawah form, ganti nomornya sesuai kebutuhan.
+Sidecar endpoints are listed below.
 
-Routing kirimnya:
+- `GET /health` reports readiness and the connected number.
+- `GET /qr` returns the current pairing QR payload.
+- `GET /code` returns the 8 digit pairing code.
+- `POST /send` sends text or media. Targets ending in `@newsletter` use the
+  custom channel pipeline. Other targets use the standard library send.
+- `POST /probe` is a token protected diagnostics endpoint used during
+  development.
 
-- Saluran: teks dan gambar dua-duanya lewat sidecar.
-- Chat pribadi/grup: teks lewat bridge Hermes (`POST /send`), gambar lewat
-  bridge juga (`POST /send-media`, file ditulis sementara lalu langsung dihapus).
+The web app uses one shared password and an httpOnly session cookie that
+lasts 30 days. The destination is locked to one Channel by default. The form
+accepts a message or caption, an image picked from a file, or an image
+pasted from the clipboard with Ctrl+V. Pasted screenshots get an automatic
+file name based on the time they were pasted. A small status line shows
+whether the sidecar and the bridge are up, and a help contact link sits at
+the bottom of the page.
 
-## Yang dibutuhkan
+Routing is simple. Text and media for a Channel both go through the sidecar.
+Text for personal and group chats goes through the Hermes bridge. Media for
+personal and group chats also goes through the bridge, which needs a file
+path, so the web app writes a temporary file and deletes it right after the
+send.
 
-- Server Linux dengan Docker dan Docker Compose.
-- Node.js 20 ke atas di host untuk menjalankan wa-web.
-- Nomor WhatsApp yang sudah jadi admin Saluran tujuan. Tidak harus pemilik
-  Saluran, admin saja cukup karena admin bisa membuat postingan.
-- RAM kosong sekitar 1,5 GB untuk container Chromium-nya.
-- Opsional: Hermes Agent dengan bridge WhatsApp aktif, kalau mau pakai tujuan
-  chat pribadi/grup.
-- Opsional: Cloudflare Tunnel kalau webnya mau dibuka dari internet.
+## Requirements
 
-## Cara install
+- A Linux machine with Docker and Docker Compose for the sidecar.
+- Node.js 20 or newer on the host for the web app.
+- A WhatsApp number that is an admin of the target Channel. The sender does
+  not need to own the Channel, since admins can create posts.
+- About 1.5 GB of free RAM for the Chromium container.
+- Optional, a Hermes Agent with its WhatsApp bridge active, for personal
+  and group destinations.
+- Optional, a Cloudflare Tunnel or another reverse proxy, if the web page
+  should be reachable from the internet.
 
-### 1. Sidecar
+## Installation
+
+### Sidecar
 
 ```bash
 cd wa-poster
 cp .env.example .env
 ```
 
-Isi dulu `.env`-nya (penjelasan variabel ada di bagian Pengaturan), lalu:
+Fill in the `.env` file first. The variables are explained in the
+Configuration section. Then build and start the container.
 
 ```bash
 docker compose up -d --build
 ```
 
-Pairing nomor pengirim, ambil kodenya dari:
+Get a pairing code from the running service.
 
 ```bash
 curl http://127.0.0.1:3001/code
 ```
 
-Di HP nomor pengirim buka WhatsApp, masuk ke Perangkat tertaut, pilih
-Tautkan perangkat, lalu pilih opsi tautkan dengan nomor telepon dan masukkan
-kode tadi. Kalau mau coba QR bisa ambil dari `GET /qr`, tapi dari pengalamanku
-kode 8 karakter jauh lebih bisa diandalkan.
-
-Cek hasil pairing:
+On the sender phone, open WhatsApp and go to Linked devices. Choose the
+option to link with a phone number instead of a QR code and enter the code.
+Then check the service state.
 
 ```bash
 curl http://127.0.0.1:3001/health
 ```
 
-Kalau `ready` sudah `true` dan field `me` berisi nomormu, sidecar siap dipakai.
+The sidecar is ready when `ready` is true and `me` shows the sender number.
 
-### 2. Web pengirim
+### Web app
 
 ```bash
 cd wa-web
@@ -150,9 +133,10 @@ cp .env.example .env
 node server.js
 ```
 
-Web jalan di port 8090 (bisa diganti di `.env`). Supaya tetap jalan terus,
-pasang sebagai service systemd user. Contoh unitnya ada di
-`wa-web.service.example`, sesuaikan path Node dan lokasi foldernya, lalu:
+The page listens on port 8090 by default. To keep it running, install it as
+a systemd user service. An example unit is included as
+`wa-web.service.example`. Adjust the Node path and the folder path in the
+unit, then run the commands below.
 
 ```bash
 systemctl --user daemon-reload
@@ -160,118 +144,117 @@ systemctl --user enable --now wa-web
 sudo loginctl enable-linger $USER
 ```
 
-Perintah terakhir itu supaya service tetap hidup walaupun user logout.
+The last command keeps the service alive after the user logs out.
 
-### 3. Dibuka dari internet (opsional)
+### Public access
 
-Aku sendiri memakai Cloudflare Tunnel. Tambahkan Public Hostname di tunnel,
-arahkan ke `http://localhost:8090`. Saranku tambahkan juga Cloudflare Access
-di depannya dan batasi hanya email tertentu yang boleh masuk, karena halaman
-ini bisa mengirim pesan memakai nomormu. Password web saja menurutku kurang.
+Add a public hostname to a Cloudflare Tunnel and point it at
+`http://localhost:8090`. Put Cloudflare Access in front of it and allow only
+selected email addresses. The web password alone is a thin barrier for a
+page that can send messages as your number.
 
-## Pengaturan
+## Configuration
 
-### wa-poster/.env
+The sidecar reads `wa-poster/.env`.
 
-- `POSTER_TOKEN` : token rahasia untuk header `X-Token`. Buat yang acak,
-  misalnya pakai `openssl rand -hex 24`.
-- `PAIR_PHONE` : nomor pengirim format internasional tanpa tanda plus,
-  contohnya `6281234567890`. Dipakai saat pairing kode.
+`POSTER_TOKEN` is the secret token for the `X-Token` header. Make it long
+and random, for example with `openssl rand -hex 24`.
 
-Pengaturan lain sidecar ada di `docker-compose.yml`: port `127.0.0.1:3001`,
-batas memori 1200 MB, volume sesi `./data`, restart `unless-stopped`.
+`PAIR_PHONE` is the sender number in international format without a plus
+sign, such as `6281234567890`. It is used for code pairing.
 
-### wa-web/.env
+Other sidecar settings live in `docker-compose.yml`. The port is bound to
+127.0.0.1 port 3001, the memory limit is 1200 MB, the session volume is
+`./data`, and the restart policy is `unless-stopped`.
 
-- `PORT` : port web, bawaannya 8090.
-- `WEB_PASSWORD` : password untuk login halaman web.
-- `POSTER_TOKEN` : harus sama persis dengan token di `.env` sidecar.
-- `CHANNEL_JID` : JID Saluran tujuan, formatnya `120363xxxxxxxxxx@newsletter`.
-- `SELF_JID` : JID nomor sendiri, formatnya `628xxxxxxxxxx@s.whatsapp.net`.
-  Dipakai kalau pilihan tujuan diaktifkan lagi (lihat bagian bawah).
+The web app reads `wa-web/.env`.
 
-### Cara dapat JID Saluran
+`PORT` sets the web port. The default is 8090.
 
-JID ini tidak kelihatan dari link undangan Saluran. Cara yang kutemukan:
-JID muncul di log bridge Hermes (`~/.hermes/whatsapp/bridge.log`) pada event
-promosi admin newsletter, atau bisa ditanyakan lewat endpoint `POST /probe`
-sidecar dengan action `channels` setelah pairing berhasil.
+`WEB_PASSWORD` is the password for the login page.
 
-### Ganti kontak bantuan di footer
+`POSTER_TOKEN` must match the sidecar token exactly.
 
-Di `wa-web/server.js` cari tulisan `Mengalami kendala?`, lalu ganti tautan
-`https://wa.me/628xxxxxxxxxx` dengan nomor admin yang diinginkan.
+`CHANNEL_JID` is the target Channel id, in the form
+`120363xxxxxxxxxx@newsletter`.
 
-## Cara pakai
+`SELF_JID` is the sender's own id, in the form
+`628xxxxxxxxxx@s.whatsapp.net`. It is used by the optional self destination
+described further down.
 
-Lewat web:
+A Channel JID is not visible on the public channel page or in the invite
+link. It appears in the Hermes bridge log at `~/.hermes/whatsapp/bridge.log`
+in the newsletter admin promotion event, and it can also be listed through
+the sidecar `POST /probe` endpoint with the `channels` action after pairing.
 
-1. Buka alamat webnya dan login.
-2. Tulis pesan atau caption.
-3. Kalau ada gambar, pilih file atau tempel screenshot dengan Ctrl+V.
-4. Klik Kirim. Postingan langsung muncul di Saluran.
+The help link in the page footer points to a wa.me address. To change it,
+search for the help text in `wa-web/server.js` and replace the number in the
+`https://wa.me/628xxxxxxxxxx` link.
 
-Lewat API sidecar langsung juga bisa.
+## Usage
 
-Kirim teks:
+Open the web page and sign in. Write a message or a caption. Attach an image
+by picking a file or by pasting a screenshot with Ctrl+V. Press Send and the
+post appears in the Channel.
 
-```bash
-curl -X POST http://127.0.0.1:3001/send \
-  -H "Content-Type: application/json" \
-  -H "X-Token: TOKEN_ANDA" \
-  -d '{"chatId":"120363xxxxxxxxxx@newsletter","text":"Halo dari API"}'
-```
-
-Kirim gambar:
+The sidecar API can also be called directly. This example sends text to a
+Channel.
 
 ```bash
 curl -X POST http://127.0.0.1:3001/send \
   -H "Content-Type: application/json" \
-  -H "X-Token: TOKEN_ANDA" \
-  -d '{"chatId":"120363xxxxxxxxxx@newsletter","mediaBase64":"BASE64_GAMBAR","mediaMimetype":"image/jpeg","mediaName":"foto.jpg","caption":"Caption gambar"}'
+  -H "X-Token: YOUR_TOKEN" \
+  -d '{"chatId":"120363xxxxxxxxxx@newsletter","text":"Hello from the API"}'
 ```
 
-Balasan sukses berisi `serverId`, itu nomor urut postingan di Saluran dari
-server WhatsApp.
+This example sends an image with a caption.
 
-## Mengaktifkan pilihan tujuan kirim
+```bash
+curl -X POST http://127.0.0.1:3001/send \
+  -H "Content-Type: application/json" \
+  -H "X-Token: YOUR_TOKEN" \
+  -d '{"chatId":"120363xxxxxxxxxx@newsletter","mediaBase64":"IMAGE_BASE64","mediaMimetype":"image/jpeg","mediaName":"photo.jpg","caption":"Image caption"}'
+```
 
-Di versi yang kupakai sekarang, tujuan di halaman web kukunci hanya ke Saluran.
-Alasannya keamanan: password web ini kubagikan ke anggota Saluran, dan aku tidak
-mau mereka bisa mengirim pesan sebagai nomorku ke orang lain.
+A successful reply contains a `serverId`. That is the post number assigned
+by WhatsApp for the Channel.
 
-Backend wa-web sebenarnya masih mendukung tujuan lain, yang diubah hanya
-tampilan halamannya. Kalau mau pilihan tujuan seperti semula, ubah tiga hal
-di `wa-web/server.js`:
+## Enabling destination choices
 
-1. Ganti blok tujuan yang terkunci dengan dropdown:
+The shipped page is locked to one Channel on purpose. The shared password is
+meant to be given to Channel members, and a locked destination stops them
+from sending messages as the owner to anyone else. The backend still accepts
+other destinations, so only the page needs three small changes in
+`wa-web/server.js`.
+
+First, replace the locked destination block with a dropdown. The block to
+replace is the `Destination` label followed by the div that shows the locked
+Channel name.
 
 ```html
-<label>Tujuan</label>
+<label>Destination</label>
 <select id="target">
-  <option value="channel">Saluran</option>
-  <option value="self">Nomor sendiri (tes)</option>
-  <option value="custom">JID lain (isi manual)</option>
+  <option value="channel">Channel</option>
+  <option value="self">Own number (testing)</option>
+  <option value="custom">Other JID (type it manually)</option>
 </select>
-<input type="text" id="customJid" placeholder="contoh: 62812xxxx@s.whatsapp.net atau 12345@g.us" style="display:none;margin-top:8px">
+<input type="text" id="customJid" placeholder="example: 62812xxxx@s.whatsapp.net or 12345@g.us" style="display:none;margin-top:8px">
 ```
 
-Blok yang diganti adalah bagian `<label>Tujuan</label>` dengan div
-"Saluran, tujuan terkunci" di bawahnya.
-
-2. Tambahkan logika menampilkan kolom JID saat opsi manual dipilih:
+Second, show the manual JID field only when the manual option is selected.
 
 ```js
 $('target').onchange=()=>{$('customJid').style.display=$('target').value==='custom'?'block':'none';};
 ```
 
-3. Ubah payload pada handler tombol Kirim. Semula target terkunci:
+Third, take the destination from the dropdown in the Send button handler.
+The locked version builds the payload with a fixed channel target.
 
 ```js
 const payload={target:'channel',text:$('text').value,...};
 ```
 
-Ganti jadi mengambil dari pilihan pengguna:
+Change it to use the selected value.
 
 ```js
 const target=$('target').value;
@@ -279,46 +262,55 @@ const jid=target==='custom'?$('customJid').value.trim():target;
 const payload={target:jid,text:$('text').value,...};
 ```
 
-Setelah itu restart servicenya: `systemctl --user restart wa-web`.
+Restart the service afterwards with `systemctl --user restart wa-web`.
 
-Format JID yang dipakai:
+Destination ids use three forms. A Channel id looks like
+`120363xxxxxxxxxx@newsletter`. A personal chat id looks like
+`628xxxxxxxxxx@s.whatsapp.net`. A group id looks like
+`12036xxxxxxxxxx@g.us`.
 
-- Saluran: `120363xxxxxxxxxx@newsletter`
-- Chat pribadi: `628xxxxxxxxxx@s.whatsapp.net`
-- Grup: `12036xxxxxxxxxx@g.us`
+Keep the security trade off in mind. With choices enabled, anyone who knows
+the web password can send messages as you to any destination.
 
-Sekali lagi soal keamanan: kalau pilihan ini diaktifkan, siapa pun yang tahu
-password web bisa mengirim pesan sebagai Anda ke siapa saja. Pikirkan lagi
-sebelum membagikan passwordnya.
+## Security notes
 
-## Catatan keamanan
+Never commit the `.env` files or the `wa-poster/data/` folder. The data
+folder holds the WhatsApp Web session, which works like the account
+credentials. The `.gitignore` in this repo already excludes both.
 
-- File `.env` dan folder `wa-poster/data/` jangan sampai ikut ter-commit.
-  Folder data itu isinya sesi WhatsApp Web, nilainya sama seperti kredensial
-  login akun. File `.gitignore` di repo ini sudah mengecualikan keduanya.
-- Sidecar hanya listen di loopback dan API-nya wajib token. Jangan buka port
-  3001 langsung ke internet.
-- Untuk pemakaian publik, tambahkan Cloudflare Access sebagai lapisan di
-  depan password web.
-- Sebisa mungkin pakai nomor khusus untuk pengirim, jangan nomor utama.
-  Jalur ini tidak resmi dari WhatsApp, jadi selalu ada risiko pembatasan akun.
-  Jangan dipakai untuk spam atau broadcast massal.
+Keep the sidecar on loopback and behind its token. Do not expose port 3001
+to the internet.
 
-## Masalah yang pernah kutemui
+Add Cloudflare Access in front of the web password when the page is public.
 
-- Pairing QR gagal terus dengan pesan tidak dapat menautkan perangkat.
-  Solusinya pakai kode pairing 8 karakter.
-- Container tidak mau start setelah di-recreate. Penyebabnya file lock
-  Chromium dari sesi sebelumnya. Sudah ditangani di `index.js`, lock dibersihkan
-  otomatis sebelum client start.
-- Kirim gambar balas error soal getter id. Itu tanda pengiriman masuk ke jalur
-  bawaan library. Pastikan targetnya berakhiran `@newsletter` supaya memakai
-  fungsi `sendToChannel()`.
-- Indikator status di web merah padahal kirim bisa. Pernah kejadian karena
-  fungsi pemanggil API memaksa semua request menjadi POST, termasuk cek
-  kesehatan yang harusnya GET. Sekarang sudah dibedakan di `callJson`.
+Use a dedicated number as the sender when possible. This system drives
+WhatsApp Web in an unofficial way, so account restrictions are a real risk.
+Do not use it for spam or mass broadcasts.
 
-## Struktur folder
+## Troubleshooting
+
+QR pairing fails with a message that the device cannot be linked. The QR
+rotates too fast in a headless session. Use the 8 digit pairing code from
+`GET /code` instead.
+
+The container will not start after being recreated. A stale Chromium lock in
+the persisted profile is the usual cause. The sidecar removes the lock files
+on start, so a plain rebuild should recover. If it still fails, check the
+container log first before touching the session data.
+
+Sending an image returns a 500 error that mentions a getter and an id
+property. The request went through the library default path instead of the
+custom pipeline. Check that the target ends in `@newsletter`.
+
+The status line on the web page shows red while sends still work. The
+status calls must use GET requests with no body. An early version of the
+web app forced every call to POST, and both health endpoints rejected that.
+
+An image sent through a Baileys bot never appears in the Channel even
+though the API reports success. That is the known silent drop described at
+the top of this file. Use the sidecar for Channel media.
+
+## Project structure
 
 ```
 .
@@ -335,10 +327,9 @@ sebelum membagikan passwordnya.
     └── .env.example
 ```
 
-## Penutup
+## Notes
 
-Proyek ini kubuat untuk kebutuhan sendiri dan masih jauh dari sempurna, tapi
-sudah kupakai harian untuk mengelola Saluran. Silakan dipakai atau dimodifikasi
-kalau ada yang butuh hal serupa. Library whatsapp-web.js sendiri berlisensi
-Apache-2.0 dan merupakan proyek terpisah dari Pedro Lopez dan para
-kontributornya. Risiko pemakaian jalur tidak resmi ini tanggung sendiri ya.
+The scope of this project is limited to the flows described above.
+The whatsapp-web.js library is a separate project by Pedro Lopez and
+contributors, licensed under Apache-2.0. Using an unofficial WhatsApp
+client path is at your own risk.
