@@ -1,6 +1,6 @@
 'use strict';
 /*
- * wa-web — one-page WhatsApp sender web.
+ * wa-web: one-page WhatsApp sender web.
  *
  * Routing (all proven paths only):
  *   text/media -> Channel        : wa-poster sidecar POST 127.0.0.1:3001/send (X-Token)
@@ -103,10 +103,10 @@ const PAGE = `<!doctype html>
 </div>
 <div id="appBox" style="display:none">
  <label>Tujuan</label>
- <div style="padding:10px;border-radius:8px;border:1px solid #2a3942;background:#1f2c34;font-size:15px">Saluran — tujuan terkunci</div>
+ <div style="padding:10px;border-radius:8px;border:1px solid #2a3942;background:#1f2c34;font-size:15px">Saluran (tujuan terkunci)</div>
  <label>Pesan teks / caption</label>
  <textarea id="text" placeholder="Tulis pesan..."></textarea>
- <label>Gambar (opsional) — pilih file atau tempel screenshot langsung (Ctrl+V)</label>
+ <label>Gambar (opsional): pilih file atau tempel screenshot langsung (Ctrl+V)</label>
  <input type="file" id="file" accept="image/*,video/mp4,application/pdf">
  <img id="prev" alt="">
  <div id="fileInfo" style="font-size:13px;color:#8696a0;margin-top:6px"></div>
@@ -139,7 +139,7 @@ document.addEventListener('paste',e=>{
  if($('appBox').style.display==='none')return;
  const cd=e.clipboardData||window.clipboardData;if(!cd||!cd.items)return;
  for(const it of cd.items){if(it.kind==='file'&&it.type.startsWith('image/')){const f=it.getAsFile();
-  if(f){e.preventDefault();loadFile(f,'tempel');$('status').textContent='Gambar dari clipboard siap — tinggal klik Kirim.';}
+  if(f){e.preventDefault();loadFile(f,'tempel');$('status').textContent='Gambar dari clipboard siap, tinggal klik Kirim.';}
   break;}}});
 $('sendBtn').onclick=async()=>{const st=$('status');
  const payload={target:'channel',text:$('text').value,...(fileData?{file:fileData}:{})};

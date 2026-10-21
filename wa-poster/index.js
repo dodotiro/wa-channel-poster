@@ -1,6 +1,6 @@
 'use strict';
 /*
- * wa-poster — WhatsApp Web sidecar for posting media to WhatsApp Channels.
+ * wa-poster: WhatsApp Web sidecar for posting media to WhatsApp Channels.
  *
  * Why this exists: the Hermes Baileys bridge delivers text to channels but
  * WhatsApp's servers silently drop every non-text (image/document/poll)
@@ -84,7 +84,7 @@ client.on('disconnected', (reason) => {
 });
 
 /*
- * Channel (newsletter) sending — custom in-page pipeline.
+ * Channel (newsletter) sending, custom in-page pipeline.
  *
  * Why not client.sendMessage: whatsapp-web.js 1.34.7's channel path is
  * broken against the current WhatsApp Web build in two places:
